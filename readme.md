@@ -1,5 +1,17 @@
 
 
+### Datasets in experiments:
+
+```
+[public real-world data]
+	Voltage dataset: https://userscloud.com/rq69d3s865qc
+	Price dataset: https://userscloud.com/zhhm350e5qn8
+	Custom dataset: https://userscloud.com/0vtf66hjbhkx
+[synthetic data]
+	Zipf dataset: built with MainForZipfDataTxt.java
+	Non-duplicate DHard dataset: built with MainForNonDupliDataTxt.java
+```
+
 
 
 ### Out-of-database experiments:
