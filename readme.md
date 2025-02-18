@@ -4,9 +4,9 @@
 
 ```
 [public real-world data]
-	Voltage dataset: https://userscloud.com/rq69d3s865qc
-	Price dataset: https://userscloud.com/zhhm350e5qn8
-	Custom dataset: https://userscloud.com/0vtf66hjbhkx
+	Voltage dataset: https://send.now/eshyb2yelggf
+	Price dataset: https://send.now/njptkr2au5au
+	Custom dataset: https://send.now/16h1fwbe386i
 [synthetic data]
 	Zipf dataset: built with MainForZipfDataTxt.java
 	Lognormal dataset: built with MainForLognormalDataTxt.java
