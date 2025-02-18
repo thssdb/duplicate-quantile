@@ -2,13 +2,17 @@ import it.unimi.dsi.fastutil.doubles.Double2DoubleOpenHashMap;
 import it.unimi.dsi.fastutil.doubles.Double2LongOpenHashMap;
 import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntIntPair;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.util.XoRoShiRo128PlusPlusRandomGenerator;
 import it.unimi.dsi.util.XoRoShiRo128PlusRandom;
 import it.unimi.dsi.util.XorShift1024StarPhiRandom;
 import it.unimi.dsi.util.XorShift1024StarPhiRandomGenerator;
 import org.apache.commons.math3.distribution.ParetoDistribution;
 import org.apache.commons.math3.distribution.ZipfDistribution;
+import org.apache.datasketches.req.ReqSketch;
+import org.apache.datasketches.req.ReqSketchBuilder;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -20,13 +24,12 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.Random;
 
-public class MainForKLL {
+public class MainForReqSketch {
     int dataType;
-    static int startType = 4, endType = 4;
-    static int[] Ns=new int[]{(int)3e7,(int)3e7,(int)3e7,(int)1.1e8,(int)3e7,(int)3.1e7};
-    static int[] Ms=new int[]{0,128,128,512};
+    static int startType = 3, endType = 3;
+    static int[] Ns=new int[]{(int)3e7,(int)3e7,(int)3e7,(int)1.1e8,(int)3e7};
     static int N = (int)3e7; // CHECK IT
-    public static int TEST_CASE = 100,TEST_CASE_M = 1; // CHECK IT
+    public static int TEST_CASE = 400,TEST_CASE_M = 1; // CHECK IT
     static double[] a;
     static ArrayList<String> err_result = new ArrayList<>();
     static ArrayList<String> time_result = new ArrayList<>();
@@ -40,10 +43,11 @@ public class MainForKLL {
         this.dataType = dataType;
         if (dataType == 4) {
 //            LogNormalDistribution log21=new LogNormalDistribution(new XoRoShiRo128PlusPlusRandomGenerator(233),1,2);
-//            for (int i = 0; i < Ns[dataType]; i++) a[i] = log21.sample();
+//            for (int i = 0; i < Ns[dataType]; i++) a[i] = log21.sample(); // lognormal
             XoRoShiRo128PlusPlusRandomGenerator random=new XoRoShiRo128PlusPlusRandomGenerator(233);
             for (int i = 0; i < Ns[dataType]; i++) a[i] =
                 Math.pow(-1, random.nextInt(2)) * Math.pow(10.0, (2 * Math.pow(random.nextDouble(), 8) - 1) * 300); // D_hard
+//            for(int i=0;i<100;i++)System.out.println("\t"+a[i]);
             return;
         }
         BufferedReader reader = null;
@@ -91,23 +95,7 @@ public class MainForKLL {
         int count=0;
         for(int i=1;i<N;i++)if(b[i]!=b[i-1])count++;
         System.out.println("\t[Pareto]\talpha:\t"+alpha+"\tEpsilon:\t"+Epsilon+"\t\tcount:\t"+count+"\t\tN:\t"+N);
-//        System.out.println("\t\t10%:\t"+a[N/10]);
-//        System.out.println("\t\t50%:\t"+a[N/10*5]);
-//        System.out.println("\t\t75%:\t"+a[N/100*75]);
-//        System.out.println("\t\t99%:\t"+a[N/100*99]);
     }
-    public void prepareLognormal(String muS,double sigma) throws IOException {
-        N=Ns[dataType];
-        if (a == null||a.length<N) a = new double[N];
-        BufferedReader reader = new BufferedReader(new FileReader("Lognormal3E7Mu"+muS+"Sigma"+(int)(sigma*10+0.1)+".txt"));
-        String line;
-        int cntN = 0;
-        while ((line = reader.readLine()) != null) {
-            a[cntN++] = Double.parseDouble(line);
-            if (cntN == N) break;
-        }
-    }
-
     public void prepareUniform(int dataType,int repeat,boolean shuffle) throws IOException {
         if (a == null) a = new double[N];
         this.dataType = dataType;
@@ -266,11 +254,17 @@ public class MainForKLL {
             int L = LL[T], R = RR[T];
 
             full_time -= new Date().getTime();
-            KLLSketchLazyExactPriori worker = new KLLSketchLazyExactPriori(queryByte);
+            ReqSketch wok=new ReqSketchBuilder().setK(1024).build();
+            for(int i=0;i<10000000;i++)wok.update((float)i);
+            for(double q:new double[]{0.1,0.5,0.9,0.99})System.out.println("\t\tq:"+q+"\t"+wok.getQuantile(q));
+            System.out.println("\t\t"+ Arrays.toString(wok.getQuantiles(new double[]{0.1, 0.5, 0.9, 0.99})));
+            System.out.println("\t\tretained items:\t"+wok.getNumRetained()+"\t\tseriByte:\t"+wok.getSerializedSizeBytes());
+            System.out.println("\t\ttoString:\t"+wok.toString());
+            if(T==0)return;
+            TDigestForDupli worker = new TDigestForDupli(queryByte);
             for (int i = L; i < R; i++)
-                worker.update(dataToLong(a[i]));
-            errBound99=worker.queryRankErrBound(0.99);
-            if(T==0)worker.showCompact();
+                worker.update(a[i]);
+//            if(T==0)worker.show();
 //            if(T==0){
 //                worker.showLevelMaxSize();
 //                worker.showNum();
@@ -279,29 +273,26 @@ public class MainForKLL {
             full_time += new Date().getTime();
 //            System.out.println("\t\t\t???\t"+worker.getAvgDupliInSketch()+"\t\t|sketch|:"+worker.getNumLen()+"\t\tMAX|sketch|:"+worker.maxMemoryNum);
 //            worker.showNum();System.out.println("\t\tL,R:\t"+L+","+R);
-            avgDupliInSketch+=worker.getAvgDupliInSketch();
 
             if (R - L >= 0) System.arraycopy(a, L, query_a, 0, R - L);
-            Arrays.parallelSort(query_a);
+            Arrays.sort(query_a);
 
             double q_add = 0.0001, q_start = q_add, q_end = 1-q_add, q_count = Math.floor((q_end - q_start - 1e-10) / q_add) + 1;
             for (double q = q_start; q < q_end + 1e-10; q += q_add) {
                 int query_rank = (int) (q * queryN);
-                double full_v = longToResult(worker.findMinValueWithRank(query_rank));
+                double full_v = worker.getQuantile(q);
                 int full_delta_rank = getDeltaRank(query_a, queryN, full_v, query_rank);
                 double full_relative_err = 1.0 * full_delta_rank / (queryN);
                 err_full += Math.abs(full_relative_err) / (q_count * TEST_CASE);
             }
         }
 //        System.out.println("N:\t"+queryN+"\tM:\t"+queryByte+"\t\tavgDupli:\t"+avgDupliInSketch/TEST_CASE);
-        System.out.println("\t\t" + queryN +/*"\t"+err_merge+*/"\t" + err_full+"\t99%bound:\t"+1.0*errBound99/queryN);
+        System.out.println("\t\t" + queryN +/*"\t"+err_merge+*/"\t" + err_full);
 
-        err_result.set(RESULT_LINE, err_result.get(RESULT_LINE).concat("\t\t\t" + err_full+"\t"+1.0*errBound99/queryN));
+        err_result.set(RESULT_LINE, err_result.get(RESULT_LINE).concat("\t\t\t" + err_full));
         time_result.set(RESULT_LINE, time_result.get(RESULT_LINE).concat("\t\t\t" + full_time));
 
     }
-
-
 
 
     public void testM(int queryN, double targetAE) throws IOException {
@@ -312,46 +303,37 @@ public class MainForKLL {
             LL[i] = random.nextInt(N - queryN + 1);
             RR[i] = LL[i] + queryN;
         }
-        double avgM=0,avgH=0,avgTopCap=0;
+        double avgM=0;
         for (int T = 0; T < TEST_CASE_M; T++) {
             int ML = 1024 * 2, MR = 1024 * 1024;
-            double tmpH=0,tmpTopCap=0;
             while (ML * 1.01 < MR) {
                 int queryByte = (ML + MR) / 2;
                 double[] query_a = new double[queryN];
                 double err_full = 0;
                 int L = LL[T], R = RR[T];
-                KLLSketchLazyExactPriori worker = new KLLSketchLazyExactPriori(queryByte);
+                TDigestForDupli worker = new TDigestForDupli(queryByte);
                 for (int i = L; i < R; i++)
-                    worker.update(dataToLong(a[i]));
+                    worker.update(a[i]);
                 if (R - L >= 0) System.arraycopy(a, L, query_a, 0, R - L);
-                Arrays.parallelSort(query_a);
+                Arrays.sort(query_a);
 
-                double q_add = 1e-5, q_start = q_add, q_end = 1 - q_add, q_count = Math.floor((q_end - q_start - 1e-10) / q_add) + 1;
+                double q_add = 0.0001, q_start = q_add, q_end = 1 - q_add, q_count = Math.floor((q_end - q_start - 1e-10) / q_add) + 1;
                 for (double q = q_start; q < q_end + 1e-10; q += q_add) {
                     int query_rank = (int) (q * queryN);
-                    double full_v = longToResult(worker.findMinValueWithRank(query_rank));
+                    double full_v = worker.getQuantile(q);
                     int full_delta_rank = getDeltaRank(query_a, queryN, full_v, query_rank);
                     double full_relative_err = 1.0 * full_delta_rank / (queryN);
                     err_full += Math.abs(full_relative_err) / (q_count);
                 }
 //                System.out.println("\t\tqueryByte:" + queryByte + "\tavgERR:" + err_full);
-                if (err_full <= targetAE) {
-                    MR = queryByte;
-                    tmpH=worker.cntLevel-1;
-                    tmpTopCap=worker.getLevelSize(worker.cntLevel-1);
-                }
+                if (err_full <= targetAE) MR = queryByte;
                 else ML = queryByte + 1;
             }
             avgM+=1.0*ML/TEST_CASE_M;
-            avgH+=tmpH/TEST_CASE_M;
-            avgTopCap+=tmpTopCap/TEST_CASE_M;
         }
-        String result_s = "\t" + avgM+"\t" + avgH+"\t" + avgTopCap;
-        System.out.println("\t\ttargetAE:" + targetAE +result_s);
-        err_result.set(RESULT_LINE, err_result.get(RESULT_LINE).concat("\t\t"+result_s));
+        System.out.println("\t\ttargetAE:" + targetAE +"\t" + avgM);
+        err_result.set(RESULT_LINE, err_result.get(RESULT_LINE).concat("\t\t\t" + avgM));
     }
-
 
     public void testQuantiles(int queryN, int queryByte, double[] Qs){
         double[] Errs = new double[Qs.length];
@@ -367,9 +349,11 @@ public class MainForKLL {
         for (int T = 0; T < TEST_CASE; T++) {
             int L = LL[T], R = RR[T];
 
-            KLLSketchLazyExactPriori worker = new KLLSketchLazyExactPriori(queryByte);
+//            TDigestForDupli worker = new TDigestForDupli(queryByte);
+            ReqSketch worker=new ReqSketchBuilder().setK(ReqSketchNM2K.get(IntIntPair.of(queryN,queryByte))).build();
             for (int i = L; i < R; i++)
-                worker.update(dataToLong(a[i]));
+                worker.update((float)a[i]);
+            if(worker.getNumRetained()*8>=queryByte)System.out.println("\t\tERR too large sketch!");
 
             if (R - L >= 0) System.arraycopy(a, L, query_a, 0, R - L);
             Arrays.sort(query_a);
@@ -377,28 +361,52 @@ public class MainForKLL {
             for (int qid=0;qid<Qs.length;qid++) {
                 double q=Qs[qid];
                 int query_rank = (int) (q * queryN);
-                double full_v = longToResult(worker.findMinValueWithRank(query_rank));
+                double full_v = worker.getQuantile(q);
                 int full_delta_rank = getDeltaRank(query_a, queryN, full_v, query_rank);
                 double full_relative_err = 1.0 * full_delta_rank / (queryN);
                 Errs[qid] += Math.abs(full_relative_err) / (TEST_CASE);
+//                System.out.println("\t\tq:"+ fnum.format(q)+"\testi_v:"+(full_v)+"\t\trel_err:"+Math.abs(full_relative_err)+"\tfull_delta_rank:"+full_delta_rank);
             }
         }
         for(int i=0;i<Qs.length;i++)
             System.out.println("\tQ:\t"+Qs[i]+"\t"+(i+1)+"\t"+Errs[i]);
     }
+
     public static void setTestCase(int tc) {
         TEST_CASE = tc;
     }
 
 
+    static Object2IntOpenHashMap<IntIntPair> ReqSketchNM2K;
+    static public int getReqK(int n,int maxByte){
+
+        int ansK=0;
+        for(int addK=1024;addK>=2;addK/=2)if(ansK+addK<=1024){
+            int cntK=ansK+addK;
+            ReqSketch wok=new ReqSketchBuilder().setK(cntK).build();
+            for(int i=0;i<n;i++)wok.update((float)i);
+            System.out.println("\t\tcntK:\t"+cntK+"\t\tmemRatio:"+1.0*wok.getNumRetained()*8/maxByte);
+            if(wok.getNumRetained()<=maxByte/8)ansK+=addK;
+        }
+        ReqSketch wok=new ReqSketchBuilder().setK(ansK).build();
+        for(int i=0;i<n;i++)wok.update((float)i);
+        System.out.println("\t\t"+wok);
+        return ansK;
+    }
+
     public static void main(String[] args) throws IOException {
         long START = new Date().getTime();
         IntArrayList rep;
-        MainForKLL main;
-        System.out.println("KLL\nTEST_CASE=" + TEST_CASE);
-//
+        MainForReqSketch main;
+        System.out.println("REQ\nTEST_CASE=" + TEST_CASE);
+//        System.out.println("\t\t1E7 128KB, reqK:\t"+getReqK((int)1e7,128*1024));
+//        System.out.println("\t\t5E7 512KB, reqK:\t"+getReqK((int)5e7,512*1024));
+        ReqSketchNM2K=new Object2IntOpenHashMap<>();
+        ReqSketchNM2K.put(IntIntPair.of((int)1e7,128*1024),86);
+        ReqSketchNM2K.put(IntIntPair.of((int)5e7,512*1024),366);
+
 //        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
-//            main = new MainForKLL();
+//            main = new MainForTD();
 //            for (int queryN : new int[]{10000000})
 //                for (int queryByte : new int[]{1024*128})
 //                    for (double alpha : new double[]{0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.2,1.3,1.4/*,1.5/*,1.6,1.7,1.8/*,1.9,2.0,2.1,2.2,2.3,2.4*/}) {
@@ -411,36 +419,17 @@ public class MainForKLL {
 //                        main.RESULT_LINE++;
 //                    }
 //        }
-//        System.out.println("\nKLL Zipf\tTEST_CASE=" + TEST_CASE);
+//        System.out.println("\nREQ Zipf\tTEST_CASE=" + TEST_CASE);
 //        System.out.println("Error rate:");
 //        for (String s : err_result)
 //            System.out.println(s);
-
-
-        String muS="5";
-        for (int dataType = 5; dataType <= 5; dataType++) { // CHECK IT
-            main = new MainForKLL();
-            for (int queryN : new int[]{10000000})
-                for (int queryByte : new int[]{1024*128})
-                    for (double sigma : new double[]{0.2,0.4,0.6,0.8,1,1.2,1.4,1.6,1.8,2}) {
-                        err_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\tsigma:\t" + sigma + "\t");
-                        time_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\tsigma:\t" + sigma + "\t");
-                        main.prepareLognormal(muS,sigma);
-                        main.testError(queryN, queryByte);
-                        main.RESULT_LINE++;
-                    }
-        }
-        System.out.println("\nKLL Lognormal mu="+muS+"\tTEST_CASE=" + TEST_CASE);
-        System.out.println("Error rate:");
-        for (String s : err_result)
-            System.out.println(s);
-
+//
 
 //        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
-//            main = new MainForKLL();
+//            main = new MainForTD();
 //            for (int queryN : new int[]{10000000})
 //                for (int queryByte : new int[]{1024*64})
-//                    for (double alpha : new double[]{/*0.5,0.75,1,*/1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5}) {
+//                    for (double alpha : new double[]{0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5}) {
 //                        err_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\talpha:\t" + alpha + "\t");
 //                        time_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\talpha:\t" + alpha + "\t");
 //                        main.preparePareto(dataType,alpha);
@@ -448,19 +437,17 @@ public class MainForKLL {
 //                        main.RESULT_LINE++;
 //                    }
 //        }
-//        System.out.println("\nKLL Pareto\tTEST_CASE=" + TEST_CASE);
+//        System.out.println("\nREQ Pareto\tTEST_CASE=" + TEST_CASE);
 //        System.out.println("Error rate:");
 //        for (String s : err_result) System.out.println(s);
-//
 //
 //        err_result=new ArrayList<>();
 //        time_result=new ArrayList<>();
 //        rep=new IntArrayList();//for(int i:new int[]{4,8,12,16,20})rep.add(i);
-////        for(int i=4;i<=64;i+=4)rep.add(i);
-////        for(int i=64+32;i<=1024;i+=32)rep.add(i);
-//        rep.add(256);
+//        for(int i=4;i<=64;i+=4)rep.add(i);
+//        for(int i=64+32;i<=1024;i+=32)rep.add(i);
 //        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
-//            main = new MainForKLL();
+//            main = new MainForTD();
 //            for (int queryN : new int[]{10000000})
 //                for (int queryByte : new int[]{1024*128})
 ////                    for (int repeat : new int[]{4,6,8,12,16,24,32,48,64,96,128,192,256,384,512,768,1024,1536,2048}) {
@@ -484,12 +471,11 @@ public class MainForKLL {
 
 //        err_result=new ArrayList<>();
 //        time_result=new ArrayList<>();
-//        rep=new IntArrayList();//for(int i:new int[]{36})rep.add(i);
+//        rep=new IntArrayList();for(int i:new int[]{36})rep.add(i);
 ////        for(int i=4;i<=64;i+=4)rep.add(i);
-////        for(int i=64+16;i<=1024;i+=16)rep.add(i);
-//        rep.add(1024);
+////        for(int i=64+32;i<=1024;i+=32)rep.add(i);
 //        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
-//            main = new MainForKLL();
+//            main = new MainForTD();
 //            for (int queryN : new int[]{10000000})
 //                for (double targetAE: new double[]{1e-5})
 //                    for (int repeat : rep) {
@@ -506,15 +492,19 @@ public class MainForKLL {
 //        for (String s : err_result)
 //            System.out.println(s);
 
+//        err_result.add("\t");
+//        time_result.add("\t");
+//        main = new MainForTD();
+//        main.prepareA(1);
+//        main.testError(4000000, 1024*256);
 
 
 //        err_result=new ArrayList<>();
 //        time_result=new ArrayList<>();
 //        IntArrayList Ms=new IntArrayList();for(int i=256;i<=1024;i+=64)Ms.add(i);
-////        Ms.add(64);Ms.add(128);Ms.add(256);Ms.add(512);Ms.add(1024);
 //        for (int dataType = startType; dataType <= endType; dataType++) { // CHECK IT
 //            System.out.println("DATASET:"+dataType);
-//            main = new MainForKLL();
+//            main = new MainForTD();
 //            for (int queryN : new int[]{50000000})
 //                for (int queryKB : Ms){
 //                    if (dataType == startType) {
@@ -532,10 +522,10 @@ public class MainForKLL {
 //        err_result=new ArrayList<>();
 //        time_result=new ArrayList<>();
 //        IntArrayList Ns=new IntArrayList();//for(double i=1e6;i<1.01*2e7;i+=Math.min(i,2e6))Ns.add((int)i);//for(double i=1e7;i<1.1e8;i+=1e7)Ns.add((int)i);//
-//        Ns.add((int)18e6);
+//        Ns.add((int)1e6);
 //        for (int dataType = startType; dataType <= endType; dataType++) { // CHECK IT
 //            System.out.println("DATASET:"+dataType);
-//            main = new MainForKLL();
+//            main = new MainForReqSketch();
 //            for (int queryN : Ns)
 //                for (int queryByte : new int[]{/*1024*512*/1024*64}){
 //                    if (dataType == startType) {
@@ -551,15 +541,17 @@ public class MainForKLL {
 //        System.out.println("\nError rate:");for (String s : err_result) System.out.println(s);
 
 
-//        DoubleArrayList Qs=new DoubleArrayList();
-//        for(int i=1;i<=5;i++)Qs.add(i/100.0);for(int i=10;i<=90;i+=5)Qs.add(i/100.0);for(int i=95;i<=99;i++)Qs.add(i/100.0);
-//        for (int dataType = startType; dataType <= endType; dataType++){
-//            System.out.println("\n----dataType:"+dataType+"--------");
-//            main = new MainForKLL();
-//            main.prepareA(dataType);
-////            main.testQuantiles((int)5e7,512*1024,Qs.toDoubleArray());
-//            main.testQuantiles((int)1e7,128*1024,Qs.toDoubleArray());
-//        }
+        DoubleArrayList Qs=new DoubleArrayList();
+//        Qs.add(0.75);
+        for(int i=1;i<=5;i++)Qs.add(i/100.0);//for(int i=10;i<=90;i+=5)Qs.add(i/100.0);for(int i=95;i<=99;i++)Qs.add(i/100.0);
+        for (int dataType = startType; dataType <= endType; dataType++){
+            System.out.println("\n----dataType:"+dataType+"--------");
+            main = new MainForReqSketch();
+            main.prepareA(dataType);
+
+            if(dataType>=0&&dataType<=2)main.testQuantiles((int)1e7,128*1024,Qs.toDoubleArray());
+            else if(dataType==3)main.testQuantiles((int)5e7,512*1024,Qs.toDoubleArray());
+        }
 
         System.out.println("\t\tALL_TIME:" + (new Date().getTime() - START));
     }

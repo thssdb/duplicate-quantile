@@ -6,7 +6,7 @@ import org.apache.commons.math3.distribution.NormalDistribution;
 
 import java.util.Arrays;
 
-public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large count
+public class KLLDupliPairFaster extends KLLSketchForQuantile { // TODO: too large count
   IntArrayList compactionNumInLevel;
   public XoRoShiRo128PlusRandom randomForReserve = new XoRoShiRo128PlusRandom();
   long MIN_V=Long.MAX_VALUE,MAX_V=Long.MIN_VALUE;
@@ -18,9 +18,9 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
   // bufferPosForLV0 ... levelPos[0]-1: unordered arrivals
   // levelPos[i] ... levelPosForPair[i]-1 : ordered & paired.
   // levelPosForPair[i] ... levelPos[i+1] : pair info for level i.
-  int AmortizedRatioForBuffer=10;
+  int AmortizedRatioForBuffer=2;
 
-  public KLLDupliPair(int maxMemoryByte) {
+  public KLLDupliPairFaster(int maxMemoryByte) {
     N = 0;
     calcParameters(maxMemoryByte);
     calcLevelMaxSize(1);
@@ -86,7 +86,7 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
     maskCountInPair=(1<<PairCountBit)-1;
   }
   private int calcIndexCount(int index,int count){
-    if(count>maskCountInPair)System.out.println("\t[ERR] too large count."+"\t"+count+">"+maskCountInPair);
+    if(count>maskCountInPair)System.out.println("\t[ERR KLLPairFast] too large count."+"\t"+count+">"+maskCountInPair);
     return (index<<PairCountBit)|count;
   }
   private int calcIndex(int indexCount){
@@ -171,9 +171,9 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
   }
 
   private long mergeTwoIndexCountIntoLong(int IC1,int IC2){
-    return ((long) IC1 <<32L)|IC2;
+    return ((long) IC1 <<32L)|(IC2&mask32From64_1);
   }
-  private void processLVNoExistPair(int LV){ // lvPos[LV]...lvPos[LV]-1 are ordered num
+  private void processLVNoExistingPair(int LV){ // lvPos[LV]...lvPos[LV]-1 are ordered num
     int cntIndex=1,cntLVPos=levelPos[LV],nextLVPos=levelPos[LV+1];
     long cntV,lastV=Long.MAX_VALUE;
     int cntCount;
@@ -195,70 +195,329 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
       if(delta>0) {
         for (int i = cntLVPos + cntIndex - 1 + delta; i >= bufferPosForLV0 + delta; i--) num[i] = num[i - delta];
         bufferPosForLV0+=delta;
-        for(int i=0;i<=LV;i++) {
+        for(int i=0;i<LV;i++) {
           levelPos[i] += delta;
           levelPosForPairs[i]+=delta;
         }
+        levelPos[LV] += delta;
       }
       IndexCountList.add(0);
       for(int i=nextLVPos-posForPairs,pairsID=0;i<nextLVPos;i++,pairsID+=2)
-        num[i]=((long)(IndexCountList.getInt(pairsID))<<32L)|(IndexCountList.getInt(pairsID+1)&mask32From64_1);
+        num[i]=mergeTwoIndexCountIntoLong(IndexCountList.getInt(pairsID),IndexCountList.getInt(pairsID+1));
       levelPosForPairs[LV]=nextLVPos-posForPairs;
     }
   }
 
+
+  private void getExistingPairsInLevel(int nowLVPos,int nowLVPairPos,int nextLVPos,LongArrayList existingPairValues,IntArrayList existingPairCounts){
+    int tmpIC,tmpIndex,tmpCount;
+    for(int existingPairID=0,i=nowLVPairPos;i<nextLVPos;i+=existingPairID&1,existingPairID++){
+      tmpIC=(existingPairID&1)==0?(int)((num[i]&mask32From64_0)>>>32):(int)(num[i]&mask32From64_1);
+      tmpIndex=(tmpIC&maskIndexInPair)>>>PairCountBit;
+      if(tmpIndex==0)break;
+      tmpCount=tmpIC&maskCountInPair;
+//      System.out.println("\t\t\texistingPairID:\t"+existingPairID+"\t\ttmpIC:\t"+tmpIC+"\t\tI,C:\t"+tmpIndex+","+tmpCount+"\t\tV:\t"+longToResult(num[nowLVPos+(tmpIndex-1)]));
+      existingPairValues.add(num[nowLVPos+(tmpIndex-1)]);
+      existingPairCounts.add(tmpCount);
+    }
+  }
+
+  /**
+   *
+   * numbers num[nowLVPos,...,nowLVPairPos-1] are ordered but may duplicate; merge with existing pairs (value,count)
+   * @return (1) int value: index of last num after deduplicate; (2) numICList: IndexCount list of merged result.
+   */
+  private int processPairsInNumWithExistingPairs(int nowLVPos,int nowLVPairPos,LongArrayList existingPairValues,IntArrayList existingPairCounts,IntArrayList numICList){
+    int cntNumIndex=0;
+    long existingPairCntValue;int existingPairCntCount;
+    int cntNumPos=nowLVPos,cntNumCount;long cntNumValue=num[cntNumPos];
+    existingPairValues.add(Long.MAX_VALUE);
+    existingPairCounts.add(-233);
+    for(int i=0;i<existingPairValues.size();i++) {
+      existingPairCntValue = existingPairValues.getLong(i);
+      existingPairCntCount = existingPairCounts.getInt(i);
+      while (cntNumPos < nowLVPairPos && (cntNumValue = num[cntNumPos]) < existingPairCntValue) {
+        if (cntNumPos+1 < nowLVPairPos && num[cntNumPos + 1] == cntNumValue) {
+          cntNumCount = 1;
+          while (cntNumPos + 1 < nowLVPairPos&&num[cntNumPos + 1] == cntNumValue) {
+            cntNumPos++;
+            cntNumCount++;
+          }
+          numICList.add(calcIndexCount(cntNumIndex + 1, cntNumCount));
+        }
+        num[nowLVPos + cntNumIndex] = cntNumValue;
+        cntNumIndex++;
+        cntNumPos++;
+      }
+      if (existingPairCntCount == -233) break;
+      cntNumCount = existingPairCntCount;
+      if (cntNumValue != existingPairCntValue)
+        System.out.println("\t\t[ERR PairFast].\t\tcntV:" + longToResult(cntNumValue) + "\t\tcntPairV:\t" + longToResult(existingPairCntValue));
+      while (cntNumPos + 1 < nowLVPairPos&&num[cntNumPos + 1] == existingPairCntValue) {
+        cntNumPos++;
+        cntNumCount++;
+      }
+      numICList.add(calcIndexCount(cntNumIndex + 1, cntNumCount));
+      num[nowLVPos + cntNumIndex] = cntNumValue;
+      cntNumIndex++;
+      cntNumPos++;
+    }
+    return cntNumIndex;
+  }
+
+  /**
+   * input: num[nowLVPos,nowLVPos+cntNumIndex) are unique num.
+   * @return delta. should move numbers below level LV. may be > 0 (move to right) or < 0 (move to left)
+   */
+  private int setIndexCountsIntoNum(int LV, int nowLVPos,int cntNumIndex,int nextLVPos,IntArrayList numICList){
+    int posForPairs=((numICList.size()+1)>>>1);
+    int delta=nextLVPos-nowLVPos-cntNumIndex-posForPairs;
+    if(delta>0) {// move to right
+      for (int i = nowLVPos+cntNumIndex - 1; i >= nowLVPos; i--) num[i+delta] = num[i];
+    }
+    if(delta<0){// move to left
+      for (int i = nowLVPos;i<nowLVPos+cntNumIndex; i++) num[i+delta] = num[i];
+    }
+    levelPos[LV] += delta;
+    if(LV==0)bufferPosForLV0=levelPos[LV];
+    levelPosForPairs[LV]=nextLVPos-posForPairs;
+    numICList.add(0);
+    for(int i=levelPosForPairs[LV],pairsID=0;i<nextLVPos;i++,pairsID+=2)
+      num[i]=mergeTwoIndexCountIntoLong(numICList.getInt(pairsID),numICList.getInt(pairsID+1));
+    return delta;
+  }
   /**
    * return: need a compaction or not
    */
   private boolean processLV0(){
     if(bufferPosForLV0==levelPos[0])return true;
 
-//    if(levelPosForPairs[0]==levelPos[1]){
-//      Arrays.sort(num,bufferPosForLV0,levelPos[1]);
-//      levelPos[0]=bufferPosForLV0;
-//      processLVNoExistPair(0);
-////      System.out.println("\t\tprocessLVNoExistingPair.\tposForPairs:\t"+(levelPos[1]-levelPosForPairs[0]));
-//      return bufferPosForLV0<=Math.max(MinimumLevelMaxSize,getLevelSize(0)/AmortizedRatioForBuffer);
-//    }
-
-    Arrays.sort(num,bufferPosForLV0,levelPos[0]);
-    int distinctInBuffer=1, pairInBuffer=0;
-    for(int i=bufferPosForLV0+1;i<levelPos[0];i++){
-      if(num[i]!=num[i-1])distinctInBuffer++;
-      else if(i==bufferPosForLV0+1||num[i-1]!=num[i-2])pairInBuffer++;
+    if(levelPosForPairs[0]==levelPos[1]){
+      Arrays.sort(num,bufferPosForLV0,levelPos[1]);
+      levelPos[0]=bufferPosForLV0;
+      processLVNoExistingPair(0);
+//      System.out.println("\t\tprocessLV0NoExistingPair.\tposForPairs:\t"+(levelPos[1]-levelPosForPairs[0]));
+//      showNum();
+      return bufferPosForLV0<=Math.max(MinimumLevelMaxSize,getLevelSize(0)/AmortizedRatioForBuffer);
     }
-    int spaceForBufferIndexCount=(pairInBuffer+1)/2;
-    long[] tmpNumBuf=new long[distinctInBuffer+spaceForBufferIndexCount];
-    long lastV;int cntIndex=0,cntPair=0,cntCount=0;
-    for(int i=bufferPosForLV0+1;i<=levelPos[0];i++){
-      lastV=num[i-1];
-      cntCount++;
-      if(i==levelPos[0]||num[i]!=lastV){
-        tmpNumBuf[cntIndex]=lastV;
-        if(cntCount>=2){
-          setIndexCountInNum(tmpNumBuf,distinctInBuffer,cntPair,calcIndexCount(1+cntIndex,cntCount));
-          cntPair++;
+
+    LongArrayList existingPairValues=new LongArrayList();
+    IntArrayList existingPairCounts=new IntArrayList();
+    int nowLVPos=levelPos[0],nowLVPairPos=levelPosForPairs[0],nextLVPos=levelPos[1];
+    getExistingPairsInLevel(nowLVPos,nowLVPairPos,nextLVPos,existingPairValues,existingPairCounts);
+
+    Arrays.sort(num,bufferPosForLV0,nowLVPairPos);
+    nowLVPos=levelPos[0]=bufferPosForLV0;
+
+    IntArrayList numICList=new IntArrayList();
+    int cntNumIndex=processPairsInNumWithExistingPairs(nowLVPos,nowLVPairPos,existingPairValues,existingPairCounts,numICList);
+    setIndexCountsIntoNum(0,nowLVPos,cntNumIndex,nextLVPos,numICList);
+//    System.out.println("\t\tprocessLV0WithExistingPair.\tposForPairs:\t"+(levelPos[1]-levelPosForPairs[0]));
+//    showNum();
+    return bufferPosForLV0<=Math.max(MinimumLevelMaxSize,getLevelSize(0)/AmortizedRatioForBuffer);
+  }
+
+  static int reservedAnItem=0;
+  static long reservedNum;
+  /**
+   *
+   * @return int value: propagated numbers are in num[ lvPosForPair[LV], return_value )
+   */
+  private int propagateNumInLevel(int LV,int nowLVPos,int nowLVPairPos,int nextLVPos,LongArrayList propagatedPairValues,IntArrayList propagatedPairCounts){
+    if((levelActualSize[LV]&1)==1){ // reserve a minimal item
+      reservedAnItem=1;
+      reservedNum=num[nowLVPos];
+    }else reservedAnItem=0;
+    levelPosForPairs[LV]=nowLVPos;
+//    System.out.println("[propagateNumInLevel]\treservedAnItem:"+reservedAnItem);
+    int rand01=getNextRand01();
+    int tmpIC,existingPairCntIndex,existingPairCntCount;long existingPairCntValue;
+    int cntNumPos=nowLVPos,cntNumIndex=0,propagatedCount;
+//    for(int j=nowLVPos;j<nowLVPairPos;j++)System.out.print("\t\t\t"+longToResult(num[j]));System.out.println();
+    for(int existingPairID=0,i=nowLVPairPos;i<nextLVPos;i+=existingPairID&1,existingPairID++){
+//      for(int j=nowLVPos;j<nowLVPairPos;j++)System.out.print("\t\t\t"+longToResult(num[j]));System.out.println();
+      tmpIC=(existingPairID&1)==0?(int)((num[i]&mask32From64_0)>>>32):(int)(num[i]&mask32From64_1);
+      existingPairCntIndex=((tmpIC&maskIndexInPair)>>>PairCountBit)-1;
+      if(existingPairCntIndex<0)break;
+      existingPairCntCount=tmpIC&maskCountInPair;
+      existingPairCntValue=num[nowLVPos+existingPairCntIndex];
+//      System.out.println("\t\t\t\t\texistingPair I,V,C:\t"+existingPairCntIndex+","+longToResult(existingPairCntValue)+","+existingPairCntCount+"\trand01:"+rand01);
+      if(reservedAnItem==1&&existingPairID==0){
+        if(existingPairCntIndex==0){
+          existingPairCntCount-=1;
+          if(existingPairCntCount<=rand01){// first paired_number does not exist in the propagated num.
+            cntNumPos++;
+            cntNumIndex++;
+            reservedAnItem=0;// reserved.
+            levelPosForPairs[LV]=nowLVPos+1;
+            rand01=0;
+            continue;
+          }// otherwise, must occur in the propagated num
         }
-        cntIndex++;
-        cntCount=0;
+        else { // first num is single num.
+          cntNumPos++;
+          cntNumIndex++;
+          reservedAnItem=0;// reserved.
+          levelPosForPairs[LV]=nowLVPos+1;
+//          System.out.println("\t\t\t\t\tReserved. first num is single num.");
+        }
+      }
+      // propagate rand01 of every 2 nums, whose index from (cntNumPos-nowLVPos) to existingPairCntIndex-1.
+      while((cntNumPos-nowLVPos)+1<existingPairCntIndex){
+        num[nowLVPos+cntNumIndex]=num[cntNumPos+rand01];
+        cntNumIndex++;
+        cntNumPos+=2;
+      }
+      if((cntNumPos-nowLVPos)+1==existingPairCntIndex){
+        if(rand01==0){
+          num[nowLVPos+cntNumIndex]=num[cntNumPos];
+          cntNumIndex++;
+          cntNumPos++;
+          propagatedCount=(existingPairCntCount)>>>1;
+          num[nowLVPos+cntNumIndex]=existingPairCntValue;
+          cntNumIndex++;
+          cntNumPos++;
+          rand01^=((existingPairCntCount)&1)^1;
+        }else{
+          propagatedCount=(existingPairCntCount+1)>>>1;
+          num[nowLVPos+cntNumIndex]=existingPairCntValue;
+          cntNumIndex++;
+          cntNumPos+=2;
+          rand01^=((existingPairCntCount)&1)^1;
+        }
+      }
+      else{
+        propagatedCount=(existingPairCntCount-rand01+1)>>>1;
+        num[nowLVPos+cntNumIndex]=existingPairCntValue;
+        cntNumIndex++;
+        cntNumPos++;
+        rand01^=((existingPairCntCount)&1);
+      }
+      if(propagatedCount>1){
+        propagatedPairValues.add(existingPairCntValue);
+        propagatedPairCounts.add(propagatedCount);
       }
     }
-//    System.out.print("\t\t[Process LV0] Distinct values:\t");
-//    for(int i=0;i<distinctInBuffer;i++)System.out.print("\t"+longToResult(tmpNumBuf[i]));
-//    System.out.println();
-//    System.out.print("\t\t\tDupli_Index,Count:\t");
-//    for(int i=0;i<pairInBuffer;i++){
-//      int indexCount=getIndexCountInNum(tmpNumBuf,distinctInBuffer,i);
-//      System.out.print("\t("+(calcIndex(indexCount)-1)+","+calcCount(indexCount)+")");
-//    }
-//    System.out.println();
+    if(reservedAnItem==1&&cntNumIndex==0){
+      cntNumPos++;
+      cntNumIndex++;
+      reservedAnItem=0; // reserved
+      levelPosForPairs[LV]=nowLVPos+1;
+    }
+    while(cntNumPos+rand01<nowLVPairPos){
+//      System.out.println("\t\t\t\t\t\tcntNumPos:"+cntNumPos+"\t\tnum:"+longToResult(num[cntNumPos]));
+      num[nowLVPos+cntNumIndex]=num[cntNumPos+rand01];
+      cntNumIndex++;
+      cntNumPos+=2;
+    }
+    return nowLVPos+cntNumIndex;
+  }
+  private void unionPairs(LongArrayList values1,LongArrayList values2,IntArrayList counts1,IntArrayList counts2,LongArrayList values,IntArrayList counts){
+//    System.out.println("\t\t\tunionPairs"+values1+values2);
+    if(values1.size()==0){values.addAll(values2);counts.addAll(counts2);return;}
+    if(values2.size()==0){values.addAll(values1);counts.addAll(counts1);return;}
+    values1.add(Long.MAX_VALUE);
+    int sz1=values1.size(),sz2=values2.size(),p1=0,p2=0;
+    for(;p1<sz1;p1++){
+      while(p2<sz2&&values2.getLong(p2)<values1.getLong(p1)){
+        values.add(values2.getLong(p2));
+        counts.add(counts2.getInt(p2));
+        p2++;
+      }
+      if(p1==sz1-1)break;
+      values.add(values1.getLong(p1));
+      if (p2<sz2&&values2.getLong(p2)==values1.getLong(p1))counts.add(counts1.getInt(p1)+counts2.getInt(p2++)-1);
+      else counts.add(counts1.getInt(p1));
+    }
+  }
 
-    mergePairsToLevel(tmpNumBuf,distinctInBuffer+(cntPair+1)/2,distinctInBuffer,0,bufferPosForLV0);// merge two seg
-    bufferPosForLV0=levelPos[0];
+  /**
+   * shift numbers in level 0...belowLV-1
+   */
+  private void shiftNum(int belowLV,int belowNumPos, int delta){
+    if(delta==0||belowLV==0)return;
+    if(delta>0)
+      for (int i = belowNumPos-1; i >= bufferPosForLV0; i--) num[i+delta] = num[i];
+    else
+      for (int i = bufferPosForLV0; i < belowNumPos; i++) num[i+delta] = num[i];
+    for(int i=0;i<belowLV;i++){
+      levelPos[i]+=delta;
+      levelPosForPairs[i]+=delta;
+    }
+    bufferPosForLV0+=delta;
+  }
+  private void compactOneLevelFaster(int LV){
+//    System.out.println("\t\t[compactOneLevelFaster]\tLV="+LV);
+    if (LV == cntLevel - 1)
+      calcLevelMaxSize(cntLevel + 1);
+    int nowLVPos = levelPos[LV], nowLVPairPos = levelPosForPairs[LV];
+    addRecord(false, Long.MIN_VALUE, Long.MAX_VALUE, LV);
+    LongArrayList propagatedPairValues=new LongArrayList(),nextLVPairValues=new LongArrayList(),unionPairValues=new LongArrayList();
+    IntArrayList propagatedPairCounts=new IntArrayList(),nextLVPairCounts=new IntArrayList(),unionPairCounts=new IntArrayList();
+    int L2=levelPos[LV+1];
+    int R1=propagateNumInLevel(LV,nowLVPos,nowLVPairPos,L2,propagatedPairValues,propagatedPairCounts);
+    int L1=levelPosForPairs[LV];// propagated numbers are in num[ lvPairPos[LV], ... )
+    int R2=levelPosForPairs[LV+1];
 
-//    showNum();
+    getExistingPairsInLevel(levelPos[LV+1],levelPosForPairs[LV+1],levelPos[LV+2],nextLVPairValues,nextLVPairCounts);
+    unionPairs(propagatedPairValues,nextLVPairValues,propagatedPairCounts,nextLVPairCounts,unionPairValues,unionPairCounts);
 
-    return bufferPosForLV0<=Math.max(MinimumLevelMaxSize,getLevelSize(0)/AmortizedRatioForBuffer);
+
+    int freeSpaceInMid=L2-R1,propagatedNumLen=R1-L1,freeSpaceInNextLevel=levelPos[LV+2]-R2;
+//    System.out.println("\t\t\tpropagatedNumLen:"+propagatedNumLen+"\t\t|unionPairs|:"+unionPairCounts.size());
+//    for(int i=L1;i<R1;i++)System.out.print("\t"+longToResult(num[i]));System.out.println();
+    if(freeSpaceInMid>=propagatedNumLen){// merge sort without temp space. freeSpace: [R1+1,L2), [R2,lvPos[LV+2])
+//      System.out.println("\t\t\tfreeSpaceInMid is enough");
+      int p1=L1,p2=L2,cntNumPos=L2-propagatedNumLen;
+      while(p1<R1||p2<R2){
+        if(p1<R1&&(p2==R2||num[p1]<num[p2]))num[cntNumPos++]=num[p1++];
+        else num[cntNumPos++]=num[p2++];
+      }
+      levelPos[LV+1]=L2-propagatedNumLen;
+    }else{
+//      System.out.println("\t\tfreeSpaceInMid is not enough");
+      if(freeSpaceInMid+freeSpaceInNextLevel>=propagatedNumLen){
+//        System.out.println("\t\t\tfreeSpaceInMid + freeSpaceInNextLevel is enough");
+        for(int i=R2-1;i>=L2;i--)num[i+freeSpaceInNextLevel]=num[i];
+        L2+=freeSpaceInNextLevel;R2+=freeSpaceInNextLevel;
+        int p1=L1,p2=L2,cntNumPos=R1;
+        while(p1<R1||p2<R2){
+          if(p1<R1&&(p2==R2||num[p1]<num[p2]))num[cntNumPos++]=num[p1++];
+          else num[cntNumPos++]=num[p2++];
+        }
+        levelPos[LV+1]=R1;
+        levelPosForPairs[LV+1]=R1+(R1-L1)+(R2-L2);
+      }else{
+//        System.out.println("\t\t\ttemp space.");
+        long[] tmpNum=Arrays.copyOfRange(num,L1,R1);
+        int p1=L1,p2=L2,cntNumPos=L2-propagatedNumLen;
+        while(p1<R1||p2<R2){
+          if(p1<R1&&(p2==R2||tmpNum[p1-L1]<num[p2]))num[cntNumPos++]=tmpNum[p1++-L1];
+          else num[cntNumPos++]=num[p2++];
+        }
+        levelPos[LV+1]=L2-propagatedNumLen;
+//        if(cntNumPos!=R2)System.out.println("?????ERR cntNumPos!=R2");
+      }
+    }
+
+    IntArrayList mergedICList=new IntArrayList();
+    int cntNumIndex=processPairsInNumWithExistingPairs(levelPos[LV+1],levelPosForPairs[LV+1], unionPairValues,unionPairCounts,mergedICList);
+    int deltaForOtherLV=setIndexCountsIntoNum(LV+1,levelPos[LV+1],cntNumIndex,levelPos[LV+2],mergedICList);
+    deltaForOtherLV=levelPos[LV+1]-levelPosForPairs[LV];
+    if(reservedAnItem==1){// level LV is empty now but should reserve an item.
+      deltaForOtherLV-=1;
+      shiftNum(LV+1,levelPosForPairs[LV],deltaForOtherLV);
+      levelPos[LV]=levelPos[LV+1]-1;
+      levelPosForPairs[LV]=levelPos[LV]+1;
+      num[levelPos[LV]]=reservedNum;
+      reservedAnItem=0;
+    }else{// level LV may be empty or with a reserved item.
+      shiftNum(LV+1,levelPosForPairs[LV],deltaForOtherLV);
+      if(levelPosForPairs[LV]!=levelPos[LV+1])System.out.println("??????");
+    }
+
+    levelActualSize[LV+1]+=levelActualSize[LV]/2;
+    levelActualSize[LV]&=1; // may reservedAnItem
   }
 
 
@@ -294,7 +553,7 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
     }
 
     long[] mergedPairNum = new long[
-        (tmpNumLength-tmpPosForPairs)
+        (tmpNumLength-tmpPosForPairs)*
             +(levelPos[LV+1]-levelPosForPairs[LV])
             +Math.min(tmpPosForPairs,levelPosForPairs[LV]-levelPos[LV])];
     int distinct=1, pairs=0,mergedNumPos=startFreePos,mergedPairs=0;
@@ -364,13 +623,7 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
       calcLevelMaxSize(cntLevel + 1);
     int L1 = levelPos[level], R1 = levelPosForPairs[level];
     addRecord(false, num[L1], num[R1 - 1], level);
-    int actualSize=R1-L1;
-    for(int i=levelPosForPairs[level];i<levelPos[level+1];i++){
-      actualSize--;
-      actualSize+=((num[i]>>>32)&maskCountInPair);
-      actualSize+=((num[i]&mask32From64_1)&maskCountInPair);
-    }
-//    for(int i=0;i<getPairsInLevel(level);i++)actualSize+=calcCount(getIndexCountInNum(num,levelPosForPairs[level],i))-1;
+    int actualSize=levelActualSize[level];
     levelActualSize[level+1]+=actualSize/2;
     levelActualSize[level]&=1; // may reservedAnItem
 
@@ -452,6 +705,7 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
 
   @Override
   public void compact() {
+//    System.out.println("[[COMPACT]]");
     long totActualSize=0;
     double cntW=1,totW=0,cntActualSizeLimit;
     for(int i=cntLevel-1;i>=0;i--){
@@ -463,12 +717,10 @@ public class KLLDupliPair extends KLLSketchForQuantile { // TODO: too large coun
       cntW*=3.0/2;
       cntActualSizeLimit=Math.max(MinimumLevelMaxSize,totActualSize*cntW/totW);
       if(levelActualSize[i]>cntActualSizeLimit||i==cntLevel-1) {
-        compactOneLevel(i);
+        compactOneLevelFaster(i);
         break;
       }
     }
-
-//    this.showLevelMaxSize();
 //    this.showNum();
   }
 

@@ -1,7 +1,9 @@
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.util.XoRoShiRo128PlusPlusRandomGenerator;
 import it.unimi.dsi.util.XoRoShiRo128PlusRandom;
 import it.unimi.dsi.util.XorShift1024StarPhiRandomGenerator;
+import org.apache.commons.math3.distribution.ParetoDistribution;
 import org.apache.commons.math3.distribution.ZipfDistribution;
 
 import java.io.BufferedReader;
@@ -16,11 +18,11 @@ import java.util.Random;
 
 public class MainForKLLDupliPair {
     int dataType;
-    static int startType = 3, endType = 3;
-    static int[] Ns=new int[]{(int)3e7,(int)3e7,(int)3e7,(int)1.1e8};
+    static int startType = 4, endType = 4;
+    static int[] Ns=new int[]{(int)3e7,(int)3e7,(int)3e7,(int)1.1e8,(int)3e7,(int)3.1e7};
     static int[] Ms=new int[]{0,128,128,512};
     static int N = (int)3e7; // CHECK IT
-    public static int TEST_CASE = 11*10,TEST_CASE_M = 1; // CHECK IT
+    public static int TEST_CASE = 20,TEST_CASE_M = 1; // CHECK IT
     static double[] a;
     static ArrayList<String> err_result = new ArrayList<>();
     static ArrayList<String> time_result = new ArrayList<>();
@@ -32,6 +34,14 @@ public class MainForKLLDupliPair {
         N=Ns[dataType];
         if (a == null||a.length<N) a = new double[N];
         this.dataType = dataType;
+        if (dataType == 4) {
+//            LogNormalDistribution log21=new LogNormalDistribution(new XoRoShiRo128PlusPlusRandomGenerator(233),1,2);
+//            for (int i = 0; i < Ns[dataType]; i++) a[i] = log21.sample();
+            XoRoShiRo128PlusPlusRandomGenerator random=new XoRoShiRo128PlusPlusRandomGenerator(233);
+            for (int i = 0; i < Ns[dataType]; i++) a[i] =
+                Math.pow(-1, random.nextInt(2)) * Math.pow(10.0, (2 * Math.pow(random.nextDouble(), 8) - 1) * 300); // D_hard
+            return;
+        }
         BufferedReader reader = null;
         if (dataType == 0)reader = new BufferedReader(new FileReader(new File("Zipf3E7Alpha10.txt")));
         if (dataType == 1)reader = new BufferedReader(new FileReader(new File("DupliTorqueVoltage.txt")));
@@ -61,6 +71,35 @@ public class MainForKLLDupliPair {
         }
         for (int i = 0; i < N; i++)
             a[i] = v2v[dis.sample()];
+    }
+    public void preparePareto(int dataType,double alpha) throws IOException {
+        if (a == null) a = new double[N];
+        this.dataType = dataType;
+        ParetoDistribution dis = new ParetoDistribution(new XorShift1024StarPhiRandomGenerator(233), 1, alpha);
+        for (int i = 0; i < N; i++)
+            a[i] = dis.sample();
+        double Epsilon=1+5e-4;
+        for (int i = 0; i < N; i++)a[i]=Math.pow(Epsilon,Math.ceil(Math.log(a[i])/Math.log(Epsilon)));
+        double[] b=Arrays.copyOf(a,N);
+        Arrays.sort(b);
+        int count=0;
+        for(int i=1;i<N;i++)if(b[i]!=b[i-1])count++;
+        System.out.println("\t[Pareto]\talpha:\t"+alpha+"\tEpsilon:\t"+Epsilon+"\t\tcount:\t"+count+"\t\tN:\t"+N);
+//        System.out.println("\t\t10%:\t"+a[N/10]);
+//        System.out.println("\t\t50%:\t"+a[N/10*5]);
+//        System.out.println("\t\t75%:\t"+a[N/100*75]);
+//        System.out.println("\t\t99%:\t"+a[N/100*99]);
+    }
+    public void prepareLognormal(String muS,double sigma) throws IOException {
+        N=Ns[dataType];
+        if (a == null||a.length<N) a = new double[N];
+        BufferedReader reader = new BufferedReader(new FileReader("Lognormal3E7Mu"+muS+"Sigma"+(int)(sigma*10+0.1)+".txt"));
+        String line;
+        int cntN = 0;
+        while ((line = reader.readLine()) != null) {
+            a[cntN++] = Double.parseDouble(line);
+            if (cntN == N) break;
+        }
     }
 
     public void prepareUniform(int dataType,int repeat,boolean shuffle) throws IOException {
@@ -162,15 +201,15 @@ public class MainForKLLDupliPair {
             int L = LL[T], R = RR[T];
 
             full_time -= new Date().getTime();
-            KLLDupliPair worker = new KLLDupliPair(queryByte);
+            KLLDupliPairFaster worker = new KLLDupliPairFaster(queryByte);
             for (int i = L; i < R; i++)
                 worker.update(dataToLong(a[i]));
             errBound99=worker.queryRankErrBound(0.99);
-//            if(T==0)worker.showCompact();
-//            if(T==0) {
-//                worker.show();
-////                worker.showNum();
-//            }
+            if(T==0)worker.showCompact();
+            if(T==0) {
+                worker.show();
+//                worker.showNum();
+            }
 //            System.out.println("\t\t|worker|:\t"+worker.getMaximumMapCapacity()+"\t\tsketchM:"+sketchM);
             full_time += new Date().getTime();
 
@@ -333,18 +372,55 @@ public class MainForKLLDupliPair {
 //                        main.testError(queryN, queryByte);
 //                        main.RESULT_LINE++;
 //                    }
-//        }
-//        System.out.println("\nKLLDupliPair Zipf\tTEST_CASE=" + TEST_CASE);
+//        }System.out.println("\nKLLDupliPair Zipf\tTEST_CASE=" + TEST_CASE);
 //        System.out.println("Error rate:");
 //        for (String s : err_result)
 //            System.out.println(s);
+
+
+        String muS="5";
+        for (int dataType = 5; dataType <= 5; dataType++) { // CHECK IT
+            main = new MainForKLLDupliPair();
+            for (int queryN : new int[]{10000000})
+                for (int queryByte : new int[]{1024*128})
+                    for (double sigma : new double[]{0.2,0.4,0.6,0.8,1,1.2,1.4,1.6,1.8,2}) {
+                        err_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\tsigma:\t" + sigma + "\t");
+                        time_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\tsigma:\t" + sigma + "\t");
+                        main.prepareLognormal(muS,sigma);
+                        main.testError(queryN, queryByte);
+                        main.RESULT_LINE++;
+                    }
+        }
+        System.out.println("\nKLLDupliPair Lognormal mu="+muS+"\tTEST_CASE=" + TEST_CASE);
+        System.out.println("Error rate:");
+        for (String s : err_result)
+            System.out.println(s);
+
+
+
+//        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
+//            main = new MainForKLLDupliPair();
+//            for (int queryN : new int[]{10000000})
+//                for (int queryByte : new int[]{1024*64})
+//                    for (double alpha : new double[]{/*0.5,0.75,1,*/1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5}) {
+//                        err_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\talpha:\t" + alpha + "\t");
+//                        time_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\talpha:\t" + alpha + "\t");
+//                        main.preparePareto(dataType,alpha);
+//                        main.testError(queryN, queryByte);
+//                        main.RESULT_LINE++;
+//                    }
+//        }
+//        System.out.println("\nKLLDupliPair Pareto\tTEST_CASE=" + TEST_CASE);
+//        System.out.println("Error rate:");
+//        for (String s : err_result) System.out.println(s);
 //
 //
 //        err_result=new ArrayList<>();
 //        time_result=new ArrayList<>();
-//        rep=new IntArrayList();for(int i:new int[]{96})rep.add(i);
+//        rep=new IntArrayList();//for(int i:new int[]{96})rep.add(i);
 ////        for(int i=4;i<=64;i+=4)rep.add(i);
 ////        for(int i=64+32;i<=1024;i+=32)rep.add(i);
+//        rep.add(256);
 //        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
 //            main = new MainForKLLDupliPair();
 //            for (int queryN : new int[]{10000000})
@@ -370,8 +446,9 @@ public class MainForKLLDupliPair {
 //        err_result=new ArrayList<>();
 //        time_result=new ArrayList<>();
 //        rep=new IntArrayList();//for(int i:new int[]{20,24})rep.add(i);
-//        for(int i=4;i<=64;i+=4)rep.add(i);
-//        for(int i=64+16;i<=1024;i+=16)rep.add(i);
+////        for(int i=4;i<=64;i+=4)rep.add(i);
+////        for(int i=64+16;i<=1024;i+=16)rep.add(i);
+//        rep.add(1024);
 //        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
 //            main = new MainForKLLDupliPair();
 //            for (int queryN : new int[]{10000000})
@@ -412,27 +489,28 @@ public class MainForKLLDupliPair {
 //        }
 //        System.out.println("\nError rate:");for (String s : err_result) System.out.println(s);
 //
-        err_result=new ArrayList<>();
-        time_result=new ArrayList<>();
-        IntArrayList Ns=new IntArrayList();for(double i=1e7;i<1.1e8;i+=1e7)Ns.add((int)i);//for(double i=2e6;i<1.01*2e7;i+=2e6)Ns.add((int)i);
-//        Ns.add((int)5e7);Ns.add((int)6e7);
-        for (int dataType = startType; dataType <= endType; dataType++) { // CHECK IT
-            System.out.println("DATASET:"+dataType);
-            main = new MainForKLLDupliPair();
-            for (int queryN : Ns)
-                for (int queryByte : new int[]{1024*512}){
-                    if (dataType == startType) {
-                        err_result.add("N:\t" + queryN + "\tqueryByte:\t" + queryByte+ "\t");
-                        time_result.add("N:\t" + queryN + "\tqueryByte:\t" + queryByte+ "\t");
-                    }
-                    main.prepareA(dataType);
-                    main.testError(queryN, queryByte);
-                    main.RESULT_LINE++;
-                }
-            System.out.println();
-        }
-        System.out.println("\nError rate:");
-        for (String s : err_result)System.out.println(s);
+
+//        err_result=new ArrayList<>();
+//        time_result=new ArrayList<>();
+//        IntArrayList Ns=new IntArrayList();//for(double i=1e6;i<1.01*2e7;i+=Math.min(i,2e6))Ns.add((int)i);//for(double i=1e7;i<1.1e8;i+=1e7)Ns.add((int)i);//
+//        Ns.add((int)2e7);
+//        for (int dataType = startType; dataType <= endType; dataType++) { // CHECK IT
+//            System.out.println("DATASET:"+dataType);
+//            main = new MainForKLLDupliPair();
+//            for (int queryN : Ns)
+//                for (int queryByte : new int[]{/*1024*512*/1024*64}){
+//                    if (dataType == startType) {
+//                        err_result.add("N:\t" + queryN + "\tqueryByte:\t" + queryByte+ "\t");
+//                        time_result.add("N:\t" + queryN + "\tqueryByte:\t" + queryByte+ "\t");
+//                    }
+//                    main.prepareA(dataType);
+//                    main.testError(queryN, queryByte);
+//                    main.RESULT_LINE++;
+//                }
+//            System.out.println();
+//        }
+//        System.out.println("\nError rate:");
+//        for (String s : err_result)System.out.println(s);
 
 //        DoubleArrayList Qs=new DoubleArrayList();
 ////        Qs.add(0.75);

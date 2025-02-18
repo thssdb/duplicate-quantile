@@ -20,7 +20,7 @@ public class DDSketchPositiveForDupli implements Serializable {
   private int bucket_num_limit;
   private int threshold_for_compression;
 
-  private Int2LongOpenHashMap positive_buckets;
+  Int2LongOpenHashMap positive_buckets;
   private Int2DoubleOpenHashMap positive_buckets_content;
   public double positive_collapse_bound = -Double.MAX_VALUE;
   private long zero_count;

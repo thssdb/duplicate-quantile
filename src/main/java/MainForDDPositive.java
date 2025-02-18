@@ -6,9 +6,11 @@ import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntIntPair;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.objects.Object2DoubleOpenHashMap;
+import it.unimi.dsi.util.XoRoShiRo128PlusPlusRandomGenerator;
 import it.unimi.dsi.util.XoRoShiRo128PlusRandom;
 import it.unimi.dsi.util.XorShift1024StarPhiRandom;
 import it.unimi.dsi.util.XorShift1024StarPhiRandomGenerator;
+import org.apache.commons.math3.distribution.ParetoDistribution;
 import org.apache.commons.math3.distribution.ZipfDistribution;
 
 import java.io.BufferedReader;
@@ -23,10 +25,10 @@ import java.util.Random;
 
 public class MainForDDPositive {
     int dataType;
-    static int startType = 0, endType = 0;
-    static int[] Ns=new int[]{(int)3e7,(int)3e7,(int)3e7,(int)1.1e8};
+    static int startType = 4, endType = 4;
+    static int[] Ns=new int[]{(int)3e7,(int)3e7,(int)3e7,(int)1.1e8,(int)3e7,(int)3.1e7};
     static int N = (int)3e7; // CHECK IT
-    public static int TEST_CASE = 50,TEST_CASE_M = 1; // CHECK IT
+    public static int TEST_CASE = 10,TEST_CASE_M = 1; // CHECK IT
     static double[] a;
     static ArrayList<String> err_result = new ArrayList<>();
     static ArrayList<String> time_result = new ArrayList<>();
@@ -40,6 +42,14 @@ public class MainForDDPositive {
         N=Ns[dataType];
         if (a == null||a.length<N) a = new double[N];
         this.dataType = dataType;
+        if (dataType == 4) {
+//            LogNormalDistribution log21=new LogNormalDistribution(new XoRoShiRo128PlusPlusRandomGenerator(233),1,2);
+//            for (int i = 0; i < Ns[dataType]; i++) a[i] = log21.sample();
+            XoRoShiRo128PlusPlusRandomGenerator random=new XoRoShiRo128PlusPlusRandomGenerator(233);
+            for (int i = 0; i < Ns[dataType]; i++) a[i] =
+                Math.pow(-1, random.nextInt(2)) * Math.pow(10.0, (2 * Math.pow(random.nextDouble(), 8) - 1) * 300); // D_hard
+            return;
+        }
         BufferedReader reader = null;
         if (dataType == 0)reader = new BufferedReader(new FileReader(new File("Zipf3E7Alpha10.txt")));
         if (dataType == 1)reader = new BufferedReader(new FileReader(new File("DupliTorqueVoltage.txt")));
@@ -71,7 +81,32 @@ public class MainForDDPositive {
         for (int i = 0; i < N; i++)
             a[i] = v2v[dis.sample()];
     }
-
+    public void preparePareto(int dataType,double alpha) throws IOException {
+        if (a == null) a = new double[N];
+        this.dataType = dataType;
+        ParetoDistribution dis = new ParetoDistribution(new XorShift1024StarPhiRandomGenerator(233), 1, alpha);
+        for (int i = 0; i < N; i++)
+            a[i] = dis.sample();
+        double Epsilon=1+5e-4;
+        for (int i = 0; i < N; i++)a[i]=Math.pow(Epsilon,Math.ceil(Math.log(a[i])/Math.log(Epsilon)));
+        double[] b=Arrays.copyOf(a,N);
+        Arrays.sort(b);
+        int count=0;
+        for(int i=1;i<N;i++)if(b[i]!=b[i-1])count++;
+        System.out.println("\t[Pareto]\talpha:\t"+alpha+"\tEpsilon:\t"+Epsilon+"\t\tcount:\t"+count+"\t\tN:\t"+N);
+    }
+    public void prepareLognormal(int dataType,String muS,double sigma) throws IOException {
+        N=Ns[dataType];
+        this.dataType = dataType;
+        if (a == null||a.length<N) a = new double[N];
+        BufferedReader reader = new BufferedReader(new FileReader("Lognormal3E7Mu"+muS+"Sigma"+(int)(sigma*10+0.1)+".txt"));
+        String line;
+        int cntN = 0;
+        while ((line = reader.readLine()) != null) {
+            a[cntN++] = Double.parseDouble(line);
+            if (cntN == N) break;
+        }
+    }
     public void prepareUniform(int dataType,int repeat,boolean shuffle) throws IOException {
         if (a == null) a = new double[N];
         this.dataType = dataType;
@@ -230,6 +265,7 @@ public class MainForDDPositive {
 
             full_time -= new Date().getTime();
             DDSketchPositiveForDupli worker = new DDSketchPositiveForDupli(typeMem2Alpha.getDouble(IntIntPair.of(dataType,queryByte/1024)),DDSketchPositiveForDupli.getBucketNumLimit(queryByte));
+            System.out.println("\t\tDD parameter:\t"+typeMem2Alpha.getDouble(IntIntPair.of(dataType,queryByte/1024))+"\tMIN_V:"+MIN_V);
             for (int i = L; i < R; i++)
                 worker.update(a[i]-MIN_V+1);
 //            if(T==0)worker.showCompact();
@@ -239,6 +275,9 @@ public class MainForDDPositive {
 //            }
 //            System.out.println("\t\t|worker|:\t"+worker.getMaximumMapCapacity()+"\t\tsketchM:"+sketchM);
             full_time += new Date().getTime();
+//            System.out.println("\t\tworker.positive_collapse_bound:"+worker.positive_collapse_bound);
+//            for(Map.Entry<Integer, Long> e : worker.positive_buckets.entrySet())System.out.print("\t"+e.getValue());
+//            System.out.println("\t\tworker.positive_collapse_bound:"+worker.positive_collapse_bound);
 //            System.out.println("\t\t\t???\t"+worker.getAvgDupliInSketch()+"\t\t|sketch|:"+worker.getNumLen()+"\t\tMAX|sketch|:"+worker.maxMemoryNum);
 //            worker.showNum();System.out.println("\t\tL,R:\t"+L+","+R);
 
@@ -422,11 +461,15 @@ public class MainForDDPositive {
         int[] PriceDDAlphaPow95For64KBTo256KB=new int[]{129,134,138,141,144,147,150,152,154,156,157,159,161};
         for(int i=64,j=0;i<=256;i+=16,j++)typeMem2Alpha.put(IntIntPair.of(2,i),Math.pow(0.95,PriceDDAlphaPow95For64KBTo256KB[j]));
         int[] PriceDDAlphaPow95For256KBTo1024KB=new int[]{146,150,154,158,161,163,166,168,170,171,173,175,176};
-        for(int i=256,j=0;i<=1024;i+=64,j++)typeMem2Alpha.put(IntIntPair.of(3,i),Math.pow(0.95,PriceDDAlphaPow95For64KBTo256KB[j]));
-        typeMem2Alpha.put(IntIntPair.of(0,128),Math.pow(0.95,130));
+        for(int i=256,j=0;i<=1024;i+=64,j++)typeMem2Alpha.put(IntIntPair.of(3,i),Math.pow(0.95,PriceDDAlphaPow95For256KBTo1024KB[j]));
+        typeMem2Alpha.put(IntIntPair.of(4,64),Math.pow(0.95,156)); // DHard data
+        typeMem2Alpha.put(IntIntPair.of(0,128),Math.pow(0.95,130)); // Zipf data
+        typeMem2Alpha.put(IntIntPair.of(0,64),Math.pow(0.95,105)); // Pareto data
+        typeMem2Alpha.put(IntIntPair.of(5,128),Math.pow(0.95,147)); // Lognormal data
         type2MinV=new Int2DoubleOpenHashMap();
-        type2MinV.put(1,-205.25);type2MinV.put(2,0);type2MinV.put(3,0);
-
+        type2MinV.put(0,1.0);// Pareto data
+        type2MinV.put(1,-205.25);type2MinV.put(2,0);type2MinV.put(3,0);type2MinV.put(4,-9.997209669455974E299);
+        type2MinV.put(5,1.0);
 
 //        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
 //            main = new MainForDDPositive();
@@ -446,6 +489,41 @@ public class MainForDDPositive {
 //        System.out.println("Error rate:");
 //        for (String s : err_result)
 //            System.out.println(s);
+
+
+        String muS="5";
+        for (int dataType = 5; dataType <= 5; dataType++) { // CHECK IT
+            main = new MainForDDPositive();
+            for (int queryN : new int[]{10000000})
+                for (int queryByte : new int[]{1024*128})
+                    for (double sigma : new double[]{0.2,0.4,0.6,0.8,1,1.2,1.4,1.6,1.8,2}) {
+                        err_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\tsigma:\t" + sigma + "\t");
+                        time_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\tsigma:\t" + sigma + "\t");
+                        main.prepareLognormal(dataType,muS,sigma);
+                        main.testError(queryN, queryByte);
+                        main.RESULT_LINE++;
+                    }
+        }
+        System.out.println("\nDDPositive Lognormal mu="+muS+"\tTEST_CASE=" + TEST_CASE);
+        System.out.println("Error rate:");
+        for (String s : err_result)
+            System.out.println(s);
+
+//        for (int dataType = 0; dataType <= 0; dataType++) { // CHECK IT
+//            main = new MainForDDPositive();
+//            for (int queryN : new int[]{10000000})
+//                for (int queryByte : new int[]{1024*64})
+//                    for (double alpha : new double[]{0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5}) {
+//                        err_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\talpha:\t" + alpha + "\t");
+//                        time_result.add("N:\t" + queryN + ", " + "\tqueryByte:\t" + queryByte + ", " + "\talpha:\t" + alpha + "\t");
+//                        main.preparePareto(dataType,alpha);
+//                        main.testError(queryN, queryByte);
+//                        main.RESULT_LINE++;
+//                    }
+//        }
+//        System.out.println("\nDD Pareto\tTEST_CASE=" + TEST_CASE);
+//        System.out.println("Error rate:");
+//        for (String s : err_result) System.out.println(s);
 //
 //
 //        err_result=new ArrayList<>();
@@ -528,12 +606,12 @@ public class MainForDDPositive {
 //
 //        err_result=new ArrayList<>();
 //        time_result=new ArrayList<>();
-//        IntArrayList Ns=new IntArrayList();for(double i=1e7;i<1.1e8;i+=1e7)Ns.add((int)i);//for(double i=2e6;i<1.01*2e7;i+=2e6)Ns.add((int)i);
+//        IntArrayList Ns=new IntArrayList();for(double i=1e6;i<1.01*2e7;i+=Math.min(i,2e6))Ns.add((int)i);//for(double i=1e7;i<1.1e8;i+=1e7)Ns.add((int)i);//
 //        for (int dataType = startType; dataType <= endType; dataType++) { // CHECK IT
 //            System.out.println("DATASET:"+dataType);
 //            main = new MainForDDPositive();
 //            for (int queryN : Ns)
-//                for (int queryByte : new int[]{1024*512}){
+//                for (int queryByte : new int[]{/*1024*64*/1024*64}){
 //                    if (dataType == startType) {
 //                        err_result.add("N:\t" + queryN + "\tqueryByte:\t" + queryByte+ "\t");
 //                        time_result.add("N:" + queryN + ", " + "queryByte:" + queryByte+ "\t");
@@ -546,16 +624,16 @@ public class MainForDDPositive {
 //        }
 //        System.out.println("\nError rate:");for (String s : err_result) System.out.println(s);
 
-        DoubleArrayList Qs=new DoubleArrayList();
-        for(int i=1;i<=5;i++)Qs.add(i/100.0);for(int i=10;i<=90;i+=5)Qs.add(i/100.0);for(int i=95;i<=99;i++)Qs.add(i/100.0);
-        for (int dataType = startType; dataType <= endType; dataType++){
-            System.out.println("\n----dataType:"+dataType+"--------");
-            main = new MainForDDPositive();
-            main.prepareA(dataType);
-//            main.testQuantilesForPointQuantile((int)5e7,512*1024,Qs.toDoubleArray());
-            main.testQuantilesForPointQuantile((int)1e7,128*1024,Qs.toDoubleArray());
-//            main.testQuantiles((int)1e7,128*1024,Qs.toDoubleArray());
-        }
+//        DoubleArrayList Qs=new DoubleArrayList();
+//        for(int i=1;i<=5;i++)Qs.add(i/100.0);for(int i=10;i<=90;i+=5)Qs.add(i/100.0);for(int i=95;i<=99;i++)Qs.add(i/100.0);
+//        for (int dataType = startType; dataType <= endType; dataType++){
+//            System.out.println("\n----dataType:"+dataType+"--------");
+//            main = new MainForDDPositive();
+//            main.prepareA(dataType);
+////            main.testQuantilesForPointQuantile((int)5e7,512*1024,Qs.toDoubleArray());
+//            main.testQuantilesForPointQuantile((int)1e7,128*1024,Qs.toDoubleArray());
+////            main.testQuantiles((int)1e7,128*1024,Qs.toDoubleArray());
+//        }
 
         System.out.println("\t\tALL_TIME:" + (new Date().getTime() - START));
     }

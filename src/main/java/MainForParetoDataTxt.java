@@ -1,16 +1,16 @@
 import it.unimi.dsi.fastutil.ints.Int2DoubleOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntIntPair;
 import it.unimi.dsi.fastutil.objects.Object2DoubleOpenHashMap;
-import it.unimi.dsi.util.XoRoShiRo128PlusRandom;
 import it.unimi.dsi.util.XorShift1024StarPhiRandomGenerator;
-import org.apache.commons.math3.distribution.ZipfDistribution;
+import org.apache.commons.math3.distribution.ParetoDistribution;
 
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 
-public class MainForZipfDataTxt {
+public class MainForParetoDataTxt {
     int dataType;
     static int startType = 1, endType = 2;
     static int pageN = 8192;
@@ -24,32 +24,28 @@ public class MainForZipfDataTxt {
     static Int2DoubleOpenHashMap type2MinV;
 
 
-    static void prepareZipf(double alpha) throws IOException {
+    static void preparePareto(double alpha) throws IOException {
         if (a == null) a = new double[N];
-        ZipfDistribution dis = new ZipfDistribution(new XorShift1024StarPhiRandomGenerator(233), N, alpha);
-        int[] v2v=new int[N+1];
-        XoRoShiRo128PlusRandom random=new XoRoShiRo128PlusRandom(233);
-        for(int i=1;i<=N;i++){
-            v2v[i]=i;
-            if(i>1){
-                int p=random.nextInt(i);
-                v2v[i]=v2v[p];
-                v2v[p]=i;
-            }
-        }
+        ParetoDistribution dis = new ParetoDistribution(new XorShift1024StarPhiRandomGenerator(233), 1, alpha);
         for (int i = 0; i < N; i++)
-            a[i] = v2v[dis.sample()];
-//            a[i] = dis.sample();
+            a[i] = dis.sample();
+        double Epsilon=1+5e-4;
+        for (int i = 0; i < N; i++)a[i]=Math.pow(Epsilon,Math.ceil(Math.log(a[i])/Math.log(Epsilon)));
+        double[] b= Arrays.copyOf(a,N);
+        Arrays.sort(b);
+        int count=0;
+        for(int i=1;i<N;i++)if(b[i]!=b[i-1])count++;
+        System.out.println("\t[Pareto]\talpha:\t"+alpha+"\tEpsilon:\t"+Epsilon+"\t\tcount:\t"+count+"\t\tN:\t"+N);
     }
 
 
     public static void main(String[] args) throws IOException {
         long START = new Date().getTime();
-        for (double alpha : new double[]{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4}) {
-            prepareZipf(alpha);
-            String filename = "Zipf3E7Alpha"+(int)(alpha*10+0.1)+".txt";
+        for (double alpha : new double[]{0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5}) {
+            preparePareto(alpha);
+            String filename = "Pareto3E7Alpha"+(int)(alpha*100+0.1)+".txt";
             System.out.println("\t\t"+filename);
-            FileWriter fw = new FileWriter(filename);
+            FileWriter fw = new FileWriter("E:\\KLL-Dupli-Synthetic-Data\\"+filename);
             for(int i=0;i<N;i++)fw.write(a[i]+"\n");
             fw.close();
         }

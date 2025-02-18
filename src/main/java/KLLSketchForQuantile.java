@@ -4,7 +4,7 @@ import java.util.Arrays;
 
 // based on KLL Sketch in DataSketch. See https://github.com/apache/datasketches-java/tree/master/src/main/java/org/apache/datasketches/kll
 public abstract class KLLSketchForQuantile {
-  static final int MinimumLevelMaxSize=7;// at least compact MinimumLevelSizeLimit + 1 elements
+  static final int MinimumLevelMaxSize=3;// at least compact MinimumLevelSizeLimit + 1 elements
   long N;
   int maxMemoryNum;
   long[] num;
@@ -115,6 +115,11 @@ public abstract class KLLSketchForQuantile {
       int mid=(L+R+1)>>1;
       if(num[mid]<=v)L=mid;else R=mid-1;
     }return (L-levelPos[level]+1)*(1<<level);
+  }
+
+  protected long dataToLong(double data) {
+    long result = Double.doubleToLongBits((double) data);
+    return data >= 0d ? result : result ^ Long.MAX_VALUE;
   }
 
   protected double longToResult(long result) {

@@ -45,7 +45,7 @@ public class KLLDupliPairFT extends KLLSketchForQuantile { // TODO: too large co
   }
   Int2ObjectOpenHashMap<TmpLevel> tmpSketch;int tmpSketchActualSize=0,tmpSketchNumLen=0;
 
-  Long2LongOpenHashMap freqValueCount=null;
+  public Long2LongOpenHashMap freqValueCount=null;
   boolean freqValueCountFrozen=false,frozenCheckingHashMapForNonFreqValue=false;
   long[] freqValue,freqCountSum;
   int maxMemoryByte,maxMemoryNumForSketch,lastUpdateFreqLevel=0;
@@ -53,7 +53,7 @@ public class KLLDupliPairFT extends KLLSketchForQuantile { // TODO: too large co
   final int BitsPerItem=64;
   boolean ENABLE_FREQ_HASHMAP=true;
   boolean COMPACT_ACTUAL_SIZE =true;
-  int AmortizedRatioForBuffer=50,MaxFreqThresholdRatio=10;
+  int AmortizedRatioForBuffer=50,MaxFreqThresholdRatio=1;
 
   public KLLDupliPairFT(int maxMemoryByte) {
     N = 0;
@@ -1256,8 +1256,8 @@ public class KLLDupliPairFT extends KLLSketchForQuantile { // TODO: too large co
 
   private long getFreqMinimalThreshold(){
 //    return N+1;
-    return (4L<<(cntLevel-1));
-//    return (2L<<(cntLevel-1));
+//    return (4L<<(cntLevel-1));
+    return (1L<<(cntLevel-1))+1;
   }// todo 根据数据的具体内存占用来决定，比如有的数据可能次数多但是只有一个pair，那挪出去不省空间
 
   private boolean needToCheckFreqValue(){
@@ -1614,6 +1614,23 @@ public class KLLDupliPairFT extends KLLSketchForQuantile { // TODO: too large co
   }
 
 
+  protected int findTrueCountInLevel(int level,long v){
+    if(levelPos[level]>=levelPos[level+1])return 0;
+    if(level==0)
+      sortLV0();
+    int pairID=0;
+    long cntCount,trueFreq=0;
+    for(int i = lvPosT[level]; i<lvPosPairsT[level]; i++){
+      if(checkSomeIndexIsNextPairT(level,pairID,i-lvPosT[level])) {
+        cntCount = calcCount(getIndexCountInNum(num, lvPosPairsT[level], pairID));
+        pairID++;
+      }else cntCount=1;
+      if(num[i]==v)trueFreq+=cntCount* (1 << level);
+    }
+    return (int)(trueFreq);
+  }
+
+
   private void frozeAndCalcFreqValueCountSum(){
     freqValue=new long[freqValueCount.size()];
     freqCountSum=new long[freqValueCount.size()];
@@ -1628,6 +1645,17 @@ public class KLLDupliPairFT extends KLLSketchForQuantile { // TODO: too large co
       i++;
     }
     freqValueCountFrozen=true;
+  }
+
+  public long getTrueCountInSketch(long longV){
+    sortLV0();
+    long trueCount=0;
+    if(freqValueCount!=null)trueCount=freqValueCount.getOrDefault(longV,0);
+    for(int i=0;i<cntLevel;i++)trueCount+=findTrueCountInLevel(i,longV);
+    return trueCount;
+  }
+  public long getHashMapCountInSketch(long longV){
+    return freqValueCount==null?0:freqValueCount.getOrDefault(longV,0);
   }
 
   @Override
@@ -1794,4 +1822,5 @@ public class KLLDupliPairFT extends KLLSketchForQuantile { // TODO: too large co
     }
   }
 
+  public long getFreqThreshold(){return Math.max(getFreqMinimalThreshold(),lastThreshold);}
 }
